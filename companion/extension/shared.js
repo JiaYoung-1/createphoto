@@ -1,6 +1,6 @@
 // Shared in isolated extension worlds; never exports credentials or page state.
 globalThis.Atelier = (() => {
-  const SITE = 'https://atelier-two-arch-0913.wjy2378408967.chatgpt.site';
+  const SITE = 'https://www.yzqwjy.cn';
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   const MAX = 10 * 1024 * 1024;
   const mime = b => b[0]===137&&b[1]===80&&b[2]===78&&b[3]===71 ? 'image/png' : b[0]===255&&b[1]===216&&b[2]===255 ? 'image/jpeg' : String.fromCharCode(...b.slice(0,4))==='RIFF'&&String.fromCharCode(...b.slice(8,12))==='WEBP' ? 'image/webp' : null;

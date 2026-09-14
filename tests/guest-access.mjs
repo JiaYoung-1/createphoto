@@ -1,9 +1,11 @@
-import fs from 'node:fs';import assert from 'node:assert/strict';import ts from 'typescript';
+import fs from 'node:fs';import assert from 'node:assert/strict';import ts from 'typescript';import crypto from 'node:crypto';
 let user=null;const objects=new Map();
 const bucket={get:async key=>objects.has(key)?{json:async()=>JSON.parse(objects.get(key))}:null,put:async(key,value)=>objects.set(key,value),delete:async key=>objects.delete(key)};
 function mod(path,deps){const exports={};const js=ts.transpileModule(fs.readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;new Function('exports','require',js)(exports,k=>{if(!(k in deps))throw Error(k);return deps[k]});return exports}
 const storage=mod('app/api/storage.ts',{'next/headers':{cookies:async()=>({get:()=>user?.userId==='0fec796c-57c2-42eb-bcd3-6cc58c0996cf'?{value:'owner'}:undefined})},'@/lib/server/auth':{sameSecret:v=>v==='owner'},'@/lib/server/uploads':{restoreUpload:()=>{throw Error('unused')}},'@/lib/server/database':{},'@/lib/server/objects':{bucket:()=>bucket}});
-const access=mod('app/api/access/route.ts',{'../storage':storage,'@/lib/server/auth':{sameSecret:v=>v==='owner'}});
+process.env.ADMIN_ACCESS_TOKEN=crypto.randomBytes(32).toString('hex');
+const auth=mod('lib/server/auth.ts',{'node:crypto':crypto});
+const access=mod('app/api/access/route.ts',{'../storage':storage,'@/lib/server/auth':{...auth,sameSecret:v=>v==='owner'}});
 const req=(data,cookie='',origin='https://studio.test')=>new Request('https://studio.test/api/access',{method:data?'POST':'GET',headers:{Origin:origin,Cookie:cookie,'Content-Type':'application/json'},...(data?{body:JSON.stringify(data)}:{})});
 assert.deepEqual(await (await access.GET(req())).json(),{owner:false,allowed:false});
 await assert.rejects(storage.authorize(req()),/专属链接/);
@@ -25,3 +27,12 @@ await storage.authorize(req(null,newCookie));
 assert.equal((await access.POST(req({action:'revoke'},newCookie))).status,200);assert.equal(objects.size,0);
 await assert.rejects(storage.authorize(req(null,newCookie)),/专属链接/);
 console.log('PASS: anonymous denial, equal website management, owner-only receiver, guest entry cookie, hashed secret, origin protection, rotation session continuity and revocation.');
+assert.equal((await access.POST(req({action:'transferOwner'}))).status,403);
+user={userId:storage.OWNER_ID};const handoff=await (await access.POST(req({action:'transferOwner'}))).json();user=null;
+const transferToken=new URL(handoff.url).hash.slice(9);
+const accept=t=>access.POST(new Request('https://www.yzqwjy.cn/api/access',{method:'POST',headers:{Origin:'https://www.yzqwjy.cn','Content-Type':'application/json'},body:JSON.stringify({action:'acceptOwnerTransfer',token:t})}));
+const accepted=await accept(transferToken);assert.equal(accepted.status,200);assert.match(accepted.headers.get('set-cookie'),/__Host-studio-owner=.*HttpOnly; Secure/);
+assert.notEqual((await access.POST(req({action:'acceptOwnerTransfer',token:transferToken}))).status,200);
+assert.notEqual((await accept(auth.sign({purpose:'upload',origin:'https://www.yzqwjy.cn',expires:Date.now()+60000}))).status,200);
+assert.notEqual((await accept(auth.sign({purpose:'owner-domain-transfer',origin:'https://www.yzqwjy.cn',expires:0}))).status,200);
+console.log('PASS: owner-only domain transfer, target origin, purpose and expiry validation.');
