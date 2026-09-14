@@ -1,0 +1,5 @@
+import {createHmac,timingSafeEqual} from 'node:crypto';
+export function secret(){const value=process.env.ADMIN_ACCESS_TOKEN;if(!value||!/^[a-f0-9]{64}$/.test(value))throw new Error('请先配置工作电脑管理密钥。');return value}
+export function sameSecret(value:string){if(value.length!==64)return false;const expected=secret();return timingSafeEqual(Buffer.from(value),Buffer.from(expected))}
+export function sign(value:unknown){const body=Buffer.from(JSON.stringify(value)).toString('base64url');return body+'.'+createHmac('sha256',secret()).update(body).digest('base64url')}
+export function verify<T>(ticket:string){if(ticket.length>16000)throw new Error('上传凭证无效。');const [body,mac]=ticket.split('.');const expected=createHmac('sha256',secret()).update(body||'').digest('base64url');if(!mac||mac.length!==expected.length||!timingSafeEqual(Buffer.from(mac),Buffer.from(expected)))throw new Error('上传凭证无效。');const payload=JSON.parse(Buffer.from(body,'base64url').toString()) as T&{expires:number};if(payload.expires<Date.now())throw new Error('上传凭证已过期，请重试。');return payload}

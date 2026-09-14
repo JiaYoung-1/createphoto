@@ -1,3 +1,4 @@
+import {sameSecret} from "@/lib/server/auth";
 import {ACCESS_COOKIE,ACCESS_OBJECT,authorize,bucket,checkOrigin,fail,hasGuestAccess,hashAccess,isOwner,limitedBody,validGuestToken} from '../storage';
 const accessCookie=(token:string)=>`${ACCESS_COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=31536000`;
 const headers={"Cache-Control":"no-store","Referrer-Policy":"no-referrer"};
@@ -6,6 +7,7 @@ export async function POST(request:Request){try{
  checkOrigin(request);
  const text=await (await limitedBody(request)).text();if(text.length>1024)throw new Error('请求内容过长。');
  const input=JSON.parse(text);
+ if(input.action==='admin'){if(typeof input.token!=='string'||!sameSecret(input.token))return Response.json({error:'管理密钥无效。'},{status:401,headers});return Response.json({ok:true},{headers:{...headers,'Set-Cookie':`__Host-studio-owner=${input.token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=31536000`}})}
  if(input.action==='create'){
   await authorize(request);
   const token=Array.from(crypto.getRandomValues(new Uint8Array(32))).map(b=>b.toString(16).padStart(2,'0')).join('');

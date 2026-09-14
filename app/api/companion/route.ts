@@ -3,7 +3,7 @@ import {finish,uuid,WEB_MODEL,type Job} from '../jobs';
 import {architecturePrompt,creationPrompt} from '@/lib/architecture';
 export async function POST(request:Request){try{
  await authorize(request);const db=database(),body=await limitedBody(request),now=new Date().toISOString();
- if(request.headers.get('content-type')?.includes('multipart/form-data')){
+ if(body.headers.get('content-type')?.includes('multipart/form-data')){
   const form=await body.formData(),id=String(form.get('id')),worker=String(form.get('worker')),file=form.get('file');
   if(!uuid.test(id)||!uuid.test(worker)||!(file instanceof File)||!file.size||file.size>10*1024*1024)throw new Error('结果文件或任务编号无效，图片不得超过 10 MB。');
   const job=await db.prepare('SELECT * FROM edit_jobs WHERE id=? AND worker=? AND model=?').bind(id,worker,WEB_MODEL).first<Job>();

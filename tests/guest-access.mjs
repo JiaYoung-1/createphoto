@@ -2,8 +2,8 @@ import fs from 'node:fs';import assert from 'node:assert/strict';import ts from 
 let user=null;const objects=new Map();
 const bucket={get:async key=>objects.has(key)?{json:async()=>JSON.parse(objects.get(key))}:null,put:async(key,value)=>objects.set(key,value),delete:async key=>objects.delete(key)};
 function mod(path,deps){const exports={};const js=ts.transpileModule(fs.readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;new Function('exports','require',js)(exports,k=>{if(!(k in deps))throw Error(k);return deps[k]});return exports}
-const storage=mod('app/api/storage.ts',{'cloudflare:workers':{env:{BUCKET:bucket}},'@/app/chatgpt-auth':{getChatGPTUser:async()=>user}});
-const access=mod('app/api/access/route.ts',{'../storage':storage});
+const storage=mod('app/api/storage.ts',{'next/headers':{cookies:async()=>({get:()=>user?.userId==='0fec796c-57c2-42eb-bcd3-6cc58c0996cf'?{value:'owner'}:undefined})},'@/lib/server/auth':{sameSecret:v=>v==='owner'},'@/lib/server/uploads':{restoreUpload:()=>{throw Error('unused')}},'@/lib/server/database':{},'@/lib/server/objects':{bucket:()=>bucket}});
+const access=mod('app/api/access/route.ts',{'../storage':storage,'@/lib/server/auth':{sameSecret:v=>v==='owner'}});
 const req=(data,cookie='',origin='https://studio.test')=>new Request('https://studio.test/api/access',{method:data?'POST':'GET',headers:{Origin:origin,Cookie:cookie,'Content-Type':'application/json'},...(data?{body:JSON.stringify(data)}:{})});
 assert.deepEqual(await (await access.GET(req())).json(),{owner:false,allowed:false});
 await assert.rejects(storage.authorize(req()),/专属链接/);

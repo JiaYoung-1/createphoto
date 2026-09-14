@@ -1,25 +1,37 @@
-# 两人建筑工作室
+# 俞总和小吴的图像生成工作站
 
-当前推荐使用 companion/extension 中的 Chrome 接单扩展，安装步骤见该目录的“使用说明.txt”。独立 Node 浏览器程序保留供排错，不应与扩展同时运行。扩展需在已登录的普通 Chrome 中加载，只在负责出图的电脑开启接单台；另一台电脑只访问网站即可。网站目前仍仅所有者可访问，并使用 ChatGPT 登录。
+当前分支已适配 **Vercel + Supabase**。旧的 chatgpt.site 网站独立运行，不会因为本仓库更新而迁移数据。
 
-2026-09-14 已通过 Chrome 扩展 1.0.3 的真实单图任务验收：网站提交 → 自动上传主图 → 自动填写并发送 → ChatGPT 生成 → 自动保存网站 V3（基于 V0）。任务 f9ee82d2-c954-45fb-ad2f-9c9e63ce0d9a，测试将道路图片右下方围挡改成深蓝色，无手动导入结果。多参考图与跨电脑提交尚未完成真实验收。
+## 已保留的功能
+- 独立创作任务、文字生图、上传修图、多轮修改。
+- 历史记录、下载、删除与恢复。
+- 俞总通过专属链接免登录，拥有全部网站管理功能。
+- 只有工作电脑使用管理密钥连接接单程序；ChatGPT 仍在这台电脑的 Chrome 中登录。
+- 图片私有存储，10 MB 上传直接到 Supabase，不经过 Vercel 请求体；下载使用短时签名链接。
 
-私人建筑图像编辑网站，仅所有者可访问。D1 保存草稿、任务和版本关系，R2 私有保存图片。
+## 首次部署
+1. 在 Supabase 创建项目。保存数据库密码；选择适合双方的地区，并实际测试国内连通性。
+2. 在 SQL Editor 执行 `supabase/schema.sql`。脚本建立任务表并开启 RLS，创建私有 bucket `studio-private`，不创建匿名读取策略。
+3. 在 Vercel 导入此 GitHub 仓库，Framework 选 Next.js。项目根目录为仓库根目录。安装命令 `npm ci`，构建命令 `npm run build`，Output Directory 保持默认。
+4. 按 `deployment.env.example` 配置五个服务端环境变量。数据库使用项目 Connect 页面提供的 transaction pooler 连接串，密码内特殊字符需要 URL 编码；使用 TLS 验证，不要设置 rejectUnauthorized=false。Service Role Key 仅留在服务端，绝不能加 NEXT_PUBLIC_。
+5. 使用 `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` 在自己的电脑生成管理密钥，保存到 Vercel 的 ADMIN_ACCESS_TOKEN。不要提交或分享这个密钥。
+6. 重新部署。工作电脑打开 `https://你的新域名/manage`，输入管理密钥。然后在网站顶部生成俞总的专属免登录链接。
+7. 运行 `node scripts/configure-extension.mjs https://你的新域名`。将 `companion/extension` 作为独立的新扩展文件夹加载到 Chrome；关闭旧接单台，再在新站开始接单。不要在新站验证前覆盖旧站正在使用的扩展。
+8. 如果 Vercel 的 Deployment Protection 要求访问者登录 Vercel，在 Production 的访问设置中关闭该平台登录要求，保留应用自身的专属链接保护。
 
-## ChatGPT 网页接单
+## 数据迁移与切换
+本仓库不包含旧站的图片、数据库、会话或秘密链接。创建 Supabase 项目后，仍需从旧站授权导出 projects、assets、versions、edit_jobs 的数据和原始图片，保留 UUID 与父版本关系，再导入新库/私有 bucket。旧的 companion 心跳不要迁入；未完成的生成任务先在旧站处理完毕。新站必须重新生成专属链接，不能复用旧域名的浏览器登录状态。
 
-网站提交任务，本机 companion/run.mjs 用独立 Chrome（或 Edge）窗口操作已登录的 ChatGPT 网页，下载页面实际显示的生成图片并保存回网站。没有调用 OpenAI 或百炼 API，也不读取其他浏览器的登录信息。此模式依赖网页界面，界面变化可能需要更新程序；不是官方会员额度 API。
+正式切换前验证：原始图片、文生图、修改图、6–10 MB 上传/下载、历史恢复、电脑接单与回传；让俞总在实际手机和 Wi-Fi 网络测试。当前只完成源码适配和本地测试，未配置真实 Supabase 项目，尚未完成真实出图验收。Vercel/Supabase 不保证中国大陆网络可达性。
 
-本机需要 Node.js 和 Chrome 或 Edge。在 companion 目录安装 package-lock.json 对应依赖后运行 node run.mjs。首次在程序打开的两个标签页分别登录工作室和 ChatGPT。登录保存在被 Git 忽略的 companion/.state/browser，仅保留在本机。不要分享该目录。关闭浏览器会停止接单；电脑与程序须保持运行和联网，且能访问 ChatGPT。
+## 开发与验证
+`npm ci` → 配置 `.env.local` → `npm run dev`。
+- `npm run build`：生产构建与 TypeScript 检查。
+- `node tests/vercel.mjs`：真实 Postgres 引擎（PGlite）任务流程、事务回滚、签名和大图片回执。
+- `node tests/guest-access.mjs`：免登录与共同管理权限。
+- `node tests/text-generation.mjs`：文字生成/多轮编辑流程。
 
-网站一次只处理一个任务，主图加最多两张参考图，每张最多 10 MB，修改要求最多 2000 字。发送之前先记录任务状态；断网、重启或结果不确定时不自动重发，避免重复消耗额度。可取消尚未领取的任务；已发送任务需检查 ChatGPT 后结束等待，这不会撤回 ChatGPT 的生成。
+其他历史测试及 `.openai`、`drizzle` 配置保留用于旧站迁移参考；Vercel 运行不使用 Cloudflare 绑定。不要在 Vercel 上执行旧的 SQLite migrations。
 
-登录失效、验证码、额度不足或页面变化时需要人工处理。已下载的结果保存在 companion/.state/jobs，可重试保存；尚未下载的结果可从 ChatGPT 手动下载，再使用网站“导入修改图”。会员自身的额度和限制继续适用，不保证指定区域以外的像素完全不变。
-
-## 验证
-
-- node tests/companion.mjs：仅 localhost，验证鉴权、队列、设备互斥、状态转移、结果回存和取消，不调用 ChatGPT。
-- node tests/workflow.mjs：仅 localhost，验证上传、草稿冲突、版本分支、下载和同源写入。
-- node --check companion/run.mjs 和 TypeScript 检查；Sites 构建生成 Cloudflare Worker。
-
-drizzle 中的既有迁移保持不变；0002 增加任务阶段及本机在线状态。历史版本与图片继续保留。上述真实验收针对 Chrome 扩展；旧 Node 浏览器程序未完成同等验收。
+## 临时上传清理
+未完成确认的图片可能保留在私有 bucket 的 staging/ 目录。可在 Supabase Storage 中定期删除该目录内一天以前的对象；不要删除 images/ 或 private/。这不影响已保存版本。

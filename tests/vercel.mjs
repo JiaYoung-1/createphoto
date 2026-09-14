@@ -1,0 +1,30 @@
+import fs from 'node:fs';import assert from 'node:assert/strict';import ts from 'typescript';import crypto from 'node:crypto';import {PGlite} from '@electric-sql/pglite';
+function mod(path,deps){const exports={};const js=ts.transpileModule(fs.readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;new Function('exports','require',js)(exports,k=>{if(!(k in deps))throw Error(k);return deps[k]});return exports}
+process.env.ADMIN_ACCESS_TOKEN=crypto.randomBytes(32).toString('hex');process.env.DATABASE_URL='postgresql://test';
+const auth=mod('lib/server/auth.ts',{'node:crypto':crypto});
+assert.equal(auth.sameSecret(process.env.ADMIN_ACCESS_TOKEN),true);assert.equal(auth.sameSecret('x'.repeat(64)),false);
+const ticket=auth.sign({expires:Date.now()+10000,target:'/api/workspace'});assert.equal(auth.verify(ticket).target,'/api/workspace');assert.throws(()=>auth.verify(ticket+'x'));assert.throws(()=>auth.verify(auth.sign({expires:0})));
+const pg=new PGlite();await pg.exec('CREATE SCHEMA storage; CREATE TABLE storage.buckets(id text PRIMARY KEY,name text,public boolean,file_size_limit integer,allowed_mime_types text[]);');await pg.exec(fs.readFileSync('supabase/schema.sql','utf8'));
+class Pool{async query(sql,args){const r=await pg.query(sql,args);return {...r,rowCount:r.affectedRows}}async connect(){return {query:this.query.bind(this),release(){}}}}
+const adapter=mod('lib/server/database.ts',{'pg':{Pool,types:{setTypeParser(){}}}}),db=adapter.database();
+assert.equal(adapter.postgresQuery("SELECT '?' AS x, preserveRules FROM projects WHERE id=?"),"SELECT '?' AS x, \"preserveRules\" FROM projects WHERE id=$1");
+const objects=new Map();const storage={database:()=>db,bucket:()=>({head:async k=>objects.get(k)||null}),authorize:async()=>{},authorizeOwner:async()=>{},limitedBody:async r=>r,fail:e=>Response.json({error:e.message},{status:400})};
+const architecture=mod('lib/architecture.ts',{}),jobs=mod('app/api/jobs.ts',{'./storage':storage});
+const workspace=mod('app/api/workspace/route.ts',{'../storage':storage,'../jobs':jobs}),generate=mod('app/api/generate/route.ts',{'../storage':storage,'../jobs':jobs,'@/lib/architecture':architecture}),companion=mod('app/api/companion/route.ts',{'../storage':storage,'../jobs':jobs,'@/lib/architecture':architecture});
+const req=data=>new Request('https://test/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+const project=crypto.randomUUID(),worker=crypto.randomUUID(),id=crypto.randomUUID();
+assert.equal((await workspace.POST(req({action:'createTextTask',project}))).status,200);
+const input={id,project,parent:'',prompt:'水彩猫',references:[],preserveRules:''};
+assert.equal((await generate.POST(req(input))).status,202);assert.equal((await generate.POST(req(input))).status,202);
+assert.equal((await companion.POST(req({action:'heartbeat',worker,state:'ready'}))).status,200);
+const claimed=await (await companion.POST(req({action:'claim',worker}))).json();assert.equal(claimed.job.images.length,0);
+objects.set('images/'+id,{httpMetadata:{contentType:'image/png'}});await jobs.finish(id);
+const root=await db.prepare('SELECT parent FROM versions WHERE id=?').bind(id).first();assert.equal(root.parent,null);
+const list=await (await workspace.GET(new Request('https://test/api'))).json();assert.equal(list.projects[0].thumbnail,id);assert.equal(Number(list.projects[0].versionCount),1);
+assert.equal((await workspace.POST(req({action:'deleteTask',project}))).status,200);assert.equal((await workspace.POST(req({action:'restoreTask',project}))).status,200);
+await assert.rejects(db.batch([db.prepare("INSERT INTO projects(id,name,created) VALUES ('rollback','x','now')"),db.prepare("INSERT INTO assets(id,project,name,mime,kind,created) VALUES ('bad','missing','x','image/png','original','now')")]));
+assert.equal(await db.prepare("SELECT id FROM projects WHERE id='rollback'").first(),null);
+const uploadModule=mod('lib/server/uploads.ts',{'./auth':auth,'./objects':{objects:()=>({download:async()=>({data:new Blob([new Uint8Array(6*1024*1024)],{type:'image/png'}),error:null})})}});
+const receipt=auth.sign({path:'staging/'+crypto.randomUUID(),target:'/api/workspace',name:'large.png',size:6*1024*1024,fields:{kind:'original'},expires:Date.now()+10000});
+assert.equal((await (await uploadModule.restoreUpload(receipt,'/api/workspace')).formData()).get('file').size,6*1024*1024);await assert.rejects(uploadModule.restoreUpload(receipt,'/api/companion'));
+await pg.close();console.log('PASS: real Postgres schema, task lifecycle, atomic rollback, SQL parameters, admin secret, tamper/expiry checks and 6 MB direct-upload receipt.');
