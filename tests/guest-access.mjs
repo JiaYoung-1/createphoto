@@ -1,0 +1,27 @@
+import fs from 'node:fs';import assert from 'node:assert/strict';import ts from 'typescript';
+let user=null;const objects=new Map();
+const bucket={get:async key=>objects.has(key)?{json:async()=>JSON.parse(objects.get(key))}:null,put:async(key,value)=>objects.set(key,value),delete:async key=>objects.delete(key)};
+function mod(path,deps){const exports={};const js=ts.transpileModule(fs.readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;new Function('exports','require',js)(exports,k=>{if(!(k in deps))throw Error(k);return deps[k]});return exports}
+const storage=mod('app/api/storage.ts',{'cloudflare:workers':{env:{BUCKET:bucket}},'@/app/chatgpt-auth':{getChatGPTUser:async()=>user}});
+const access=mod('app/api/access/route.ts',{'../storage':storage});
+const req=(data,cookie='',origin='https://studio.test')=>new Request('https://studio.test/api/access',{method:data?'POST':'GET',headers:{Origin:origin,Cookie:cookie,'Content-Type':'application/json'},...(data?{body:JSON.stringify(data)}:{})});
+assert.deepEqual(await (await access.GET(req())).json(),{owner:false,allowed:false});
+await assert.rejects(storage.authorize(req()),/专属链接/);
+assert.equal((await access.POST(req({action:'create'}))).status,401);
+user={userId:'another-chatgpt-user'};await assert.rejects(storage.authorize(req()),/专属链接/);
+user={userId:storage.OWNER_ID};const created=await access.POST(req({action:'create'}));assert.equal(created.status,200);
+const {url}=await created.json();const token=new URL(url).hash.slice(8);assert.equal(token.length,64);
+assert.ok(!objects.get(storage.ACCESS_OBJECT).includes(token));
+user=null;assert.equal((await access.POST(req({action:'enter',token:'0'.repeat(64)}))).status,401);
+const entered=await access.POST(req({action:'enter',token}));assert.equal(entered.status,200);
+const setCookie=entered.headers.get('set-cookie');assert.match(setCookie,/HttpOnly; Secure; SameSite=Lax/);const cookie=setCookie.split(';')[0];
+assert.deepEqual(await (await access.GET(req(null,cookie))).json(),{owner:false,allowed:true});
+await storage.authorize(req(null,cookie));await assert.rejects(storage.authorizeOwner(req({action:'claim'},cookie)),/主人账号/);
+await assert.rejects(storage.authorize(req({action:'deleteTask'},cookie,'https://evil.test')),/来源/);
+const rotated=await access.POST(req({action:'create'},cookie));assert.equal(rotated.status,200);
+const newCookie=rotated.headers.get('set-cookie').split(';')[0];
+await assert.rejects(storage.authorize(req(null,cookie)),/专属链接/);
+await storage.authorize(req(null,newCookie));
+assert.equal((await access.POST(req({action:'revoke'},newCookie))).status,200);assert.equal(objects.size,0);
+await assert.rejects(storage.authorize(req(null,newCookie)),/专属链接/);
+console.log('PASS: anonymous denial, equal website management, owner-only receiver, guest entry cookie, hashed secret, origin protection, rotation session continuity and revocation.');

@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "两人建筑工作室 · Chrome 接单",
+  "version": "1.0.4",
+  "description": "在已登录的 Chrome 中接收私人工作室任务，通过 ChatGPT 网页生成并保存图片。",
+  "minimum_chrome_version": "120",
+  "permissions": ["storage"],
+  "host_permissions": ["https://chatgpt.com/*", "https://atelier-two-arch-0913.wjy2378408967.chatgpt.site/*"],
+  "background": {"service_worker": "background.js"},
+  "action": {"default_title": "打开工作室接单台"},
+  "content_scripts": [
+    {"matches": ["https://atelier-two-arch-0913.wjy2378408967.chatgpt.site/*"], "js": ["shared.js", "studio.js"]},
+    {"matches": ["https://chatgpt.com/*"], "js": ["shared.js", "gpt.js"]}
+  ]
+}

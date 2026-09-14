@@ -1,0 +1,1 @@
+{"name":"atelier-chatgpt-companion","private":true,"type":"module","dependencies":{"playwright":"1.63.0"},"scripts":{"start":"node run.mjs"}}

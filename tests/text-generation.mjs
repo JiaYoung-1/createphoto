@@ -1,0 +1,25 @@
+import fs from 'node:fs';import assert from 'node:assert/strict';import ts from 'typescript';import {DatabaseSync} from 'node:sqlite';
+const sqlite=new DatabaseSync(':memory:');
+for(const f of fs.readdirSync('drizzle').filter(f=>f.endsWith('.sql')).sort())sqlite.exec(fs.readFileSync('drizzle/'+f,'utf8'));
+const db={prepare(sql){let args=[];return {bind(...a){args=a;return this},async first(){return sqlite.prepare(sql).get(...args)||null},async all(){return {results:sqlite.prepare(sql).all(...args)}},async run(){const r=sqlite.prepare(sql).run(...args);return {meta:{changes:r.changes}}}}},async batch(items){for(const i of items)await i.run()}};
+const objects=new Map();const storage={database:()=>db,bucket:()=>({head:async key=>objects.get(key)||null}),authorize:async()=>{},authorizeOwner:async()=>{},limitedBody:async r=>r,fail:e=>Response.json({error:e.message},{status:400})};
+function mod(path,deps){const exports={};const js=ts.transpileModule(fs.readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;new Function('exports','require',js)(exports,k=>{if(!(k in deps))throw Error(k);return deps[k]});return exports;}
+const architecture=mod('lib/architecture.ts',{});const jobs=mod('app/api/jobs.ts',{'./storage':storage});
+const generate=mod('app/api/generate/route.ts',{'../storage':storage,'../jobs':jobs,'@/lib/architecture':architecture});
+const companion=mod('app/api/companion/route.ts',{'../storage':storage,'../jobs':jobs,'@/lib/architecture':architecture});
+const workspace=mod('app/api/workspace/route.ts',{'../storage':storage,'../jobs':jobs});
+const request=data=>new Request('https://local.test/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+const project=crypto.randomUUID(),worker=crypto.randomUUID(),id=crypto.randomUUID();
+assert.equal((await workspace.POST(request({action:'createTextTask',project}))).status,200);
+const initial={id,project,parent:'',prompt:'一只在月球散步的橘猫，水彩风格',references:[],preserveRules:''};
+assert.equal((await generate.POST(request(initial))).status,202);
+assert.equal((await generate.POST(request(initial))).status,202);
+assert.equal((await companion.POST(request({action:'heartbeat',worker,state:'ready'}))).status,200);
+const claim=await (await companion.POST(request({action:'claim',worker}))).json();
+assert.equal(claim.job.images.length,0);assert.ok(claim.job.promptForChatGPT.includes('没有输入图片'));assert.ok(!claim.job.promptForChatGPT.includes('第一张图片'));
+objects.set('images/'+id,{httpMetadata:{contentType:'image/png'}});await jobs.finish(id);
+assert.equal(sqlite.prepare('SELECT parent FROM versions WHERE id=?').get(id).parent,null);
+const next=crypto.randomUUID();assert.equal((await generate.POST(request({...initial,id:next,parent:id,prompt:'把猫改成白色'}))).status,202);
+const edit=await (await companion.POST(request({action:'claim',worker}))).json();
+assert.equal(edit.job.images.length,1);assert.equal(edit.job.images[0].id,id);assert.ok(edit.job.promptForChatGPT.includes('第一张图片'));
+console.log('PASS: text task creation, idempotent submission, zero-image claim, generated root version, follow-up image editing. No external generation.');
