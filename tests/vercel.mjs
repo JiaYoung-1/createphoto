@@ -1,12 +1,13 @@
 import fs from 'node:fs';import assert from 'node:assert/strict';import ts from 'typescript';import crypto from 'node:crypto';import {PGlite} from '@electric-sql/pglite';
 function mod(path,deps){const exports={};const js=ts.transpileModule(fs.readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;new Function('exports','require',js)(exports,k=>{if(!(k in deps))throw Error(k);return deps[k]});return exports}
-process.env.ADMIN_ACCESS_TOKEN=crypto.randomBytes(32).toString('hex');process.env.DATABASE_URL='postgresql://test';
+process.env.ADMIN_ACCESS_TOKEN=crypto.randomBytes(32).toString('hex');process.env.DATABASE_URL='postgresql://test?sslmode=verify-full';
 const auth=mod('lib/server/auth.ts',{'node:crypto':crypto});
 assert.equal(auth.sameSecret(process.env.ADMIN_ACCESS_TOKEN),true);assert.equal(auth.sameSecret('x'.repeat(64)),false);
 const ticket=auth.sign({expires:Date.now()+10000,target:'/api/workspace'});assert.equal(auth.verify(ticket).target,'/api/workspace');assert.throws(()=>auth.verify(ticket+'x'));assert.throws(()=>auth.verify(auth.sign({expires:0})));
 const pg=new PGlite();await pg.exec('CREATE SCHEMA storage; CREATE TABLE storage.buckets(id text PRIMARY KEY,name text,public boolean,file_size_limit integer,allowed_mime_types text[]);');await pg.exec(fs.readFileSync('supabase/schema.sql','utf8'));
-class Pool{async query(sql,args){const r=await pg.query(sql,args);return {...r,rowCount:r.affectedRows}}async connect(){return {query:this.query.bind(this),release(){}}}}
-const adapter=mod('lib/server/database.ts',{'pg':{Pool,types:{setTypeParser(){}}}}),db=adapter.database();
+const ca=mod('lib/server/supabase-ca.ts',{});assert.ok(new crypto.X509Certificate(ca.supabaseCA).ca);
+class Pool{constructor(options){assert.equal(options.ssl.rejectUnauthorized,true);assert.equal(options.ssl.ca,ca.supabaseCA);assert.equal(new URL(options.connectionString).searchParams.has('sslmode'),false)}async query(sql,args){const r=await pg.query(sql,args);return {...r,rowCount:r.affectedRows}}async connect(){return {query:this.query.bind(this),release(){}}}}
+const adapter=mod('lib/server/database.ts',{'./supabase-ca':ca,'pg':{Pool,types:{setTypeParser(){}}}}),db=adapter.database();
 assert.equal(adapter.postgresQuery("SELECT '?' AS x, preserveRules FROM projects WHERE id=?"),"SELECT '?' AS x, \"preserveRules\" FROM projects WHERE id=$1");
 const objects=new Map();const storage={database:()=>db,bucket:()=>({head:async k=>objects.get(k)||null}),authorize:async()=>{},authorizeOwner:async()=>{},limitedBody:async r=>r,fail:e=>Response.json({error:e.message},{status:400})};
 const architecture=mod('lib/architecture.ts',{}),jobs=mod('app/api/jobs.ts',{'./storage':storage});

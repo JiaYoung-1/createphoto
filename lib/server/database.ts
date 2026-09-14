@@ -1,7 +1,14 @@
 import {Pool,types} from 'pg';
+import {supabaseCA} from './supabase-ca';
 types.setTypeParser(20,Number);
 let pool:Pool|undefined;
-function connection(){if(!process.env.DATABASE_URL)throw new Error('请先配置 Supabase 数据库。');return pool??=new Pool({connectionString:process.env.DATABASE_URL,max:3,idleTimeoutMillis:20000,connectionTimeoutMillis:10000})}
+function connection(){
+ if(!process.env.DATABASE_URL)throw new Error('请先配置 Supabase 数据库。');
+ const url=new URL(process.env.DATABASE_URL);
+ // pg's URL SSL options override the explicit CA, so keep TLS configuration here.
+ for(const key of ['sslmode','sslrootcert','sslcert','sslkey'])url.searchParams.delete(key);
+ return pool??=new Pool({connectionString:url.toString(),ssl:{ca:supabaseCA,rejectUnauthorized:true},max:3,idleTimeoutMillis:20000,connectionTimeoutMillis:10000});
+}
 // Keep the existing parameterized task queries while moving SQLite data to Postgres.
 export function postgresQuery(sql:string){let index=0;const ignore=/^INSERT OR IGNORE /i.test(sql);sql=sql.replace(/^INSERT OR IGNORE /i,'INSERT ');sql=sql.replace(/'(?:''|[^'])*'|"(?:""|[^"])*"|\?|\b(?:preserveRules|thumbnail|versionCount)\b/g,part=>part==='?'?`$${++index}`:part[0]==="'"||part[0]==='"'?part:`"${part}"`);return sql+(ignore?' ON CONFLICT DO NOTHING':'')}
 class Statement{
